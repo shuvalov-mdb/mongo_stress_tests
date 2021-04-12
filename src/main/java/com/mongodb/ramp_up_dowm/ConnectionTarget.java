@@ -7,10 +7,12 @@ import java.util.concurrent.locks.ReentrantLock;
 
 public class ConnectionTarget {
     static final int CONNECTION_RAMP_UP_PER_SEC = 10;
-    static final int CONNECTION_RAMP_DOWN_PER_SEC = 10;
-    static final Duration STRESS_STATE_LENGTH = Duration.ofSeconds(10);
+    static final int CONNECTION_RAMP_DOWN_PER_SEC = 30;
+    static final int RAMP_UP_MINIMAL_TIME_SECONDS = 30;
+    static final int STRESS_STATE_LENGTH_SECONDS = 20;
 
     private final ReentrantLock lock = new ReentrantLock();
+    private final LocalDateTime rampUpStart = LocalDateTime.now();
     private State state = State.RAMP_UP;
     private LocalDateTime lastAdjustTime = LocalDateTime.now();
     private LocalDateTime stressStateStart;
@@ -53,7 +55,7 @@ public class ConnectionTarget {
                 break;
                 case STRESS: {
                     if (ChronoUnit.MILLIS.between(stressStateStart, now) > 
-                        STRESS_STATE_LENGTH.get(ChronoUnit.MILLIS)) {
+                        STRESS_STATE_LENGTH_SECONDS * 1000) {
                         state = State.RAMP_DOWN;
                         System.out.println("Detected stress completion state");
                     }
@@ -75,6 +77,11 @@ public class ConnectionTarget {
 
     void checkIfRampUpDone() {
         assert(lock.isLocked());
+        LocalDateTime now = LocalDateTime.now();
+        if (ChronoUnit.MILLIS.between(rampUpStart, now) < 
+            RAMP_UP_MINIMAL_TIME_SECONDS * 1000) {
+            return;
+        }
         int currentReadQPS = stats.getValue("read");
         int currentWriteQPS = stats.getValue("write");
         if (currentReadQPS < lastReadQPS * 0.99 &&

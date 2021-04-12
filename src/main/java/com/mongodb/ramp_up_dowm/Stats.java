@@ -67,6 +67,8 @@ public class Stats {
         lock.lock();
         try {
             return stats.get(key).getCount();
+        } catch (NullPointerException e) {
+            return 0;
         } finally {
             lock.unlock();
         }

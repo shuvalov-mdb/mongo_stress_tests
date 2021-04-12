@@ -50,9 +50,11 @@ public class RampUpAndDown {
     private Vector<MongoClient> clients = new Vector<MongoClient>();
     private ConcurrentLinkedDeque<ReadThread> readThreads = new ConcurrentLinkedDeque<ReadThread>();
     private ConcurrentLinkedDeque<WriteThread> writeThreads = new ConcurrentLinkedDeque<WriteThread>();
+    private ConnectionTarget connectionTarget;
 
     public RampUpAndDown(Stats stats) throws Exception {
         this.stats = stats;
+        connectionTarget = new ConnectionTarget(stats, MIN_READ_THREADS);
         for (int i = 0; i < CLIENT_COUNT; ++i) {
             try {
                 MongoClient mongoClient = createClient();
@@ -111,10 +113,10 @@ public class RampUpAndDown {
         while (true) {
             lock.lock();
             try {
-                while (readThreads.size() < MIN_READ_THREADS) {
-                    addReadThreadLocked();
+                while (readThreads.size() + writeThreads.size() < connectionTarget.getThreadCountTarget()) {
+                    maybeAddReadThreadLocked();
                     stats.logStatsIfNeeded();
-                    Thread.sleep(10);
+                    Thread.sleep(1);
                 }
                 Iterator<ReadThread> it = readThreads.iterator();
                 while (it.hasNext()) {
@@ -122,10 +124,7 @@ public class RampUpAndDown {
                     Thread.State state = t.getState();
                     if (state == Thread.State.TERMINATED) {
                         it.remove();
-                        if (readThreads.size() < MAX_READ_THREADS) {
-                            addReadThreadLocked();
-                        }
-                        break;
+                        stats.setThreadCount(readThreads.size(), true);
                     }
                     Document doc = t.getResult();
                     if (doc != null) {
@@ -145,23 +144,27 @@ public class RampUpAndDown {
     public void write() {
         lock.lock();
         try {
-            addWriteThreadLocked();
+            maybeAddWriteThreadLocked();
         } finally {
             lock.unlock();
         }
     }
 
-    private void addReadThreadLocked() {
+    private void maybeAddReadThreadLocked() {
         assert(lock.isLocked());
+        if (readThreads.size() + writeThreads.size() > connectionTarget.getThreadCountTarget()) {
+            return;
+        }
         ReadThread t = new ReadThread(this, stats);
         readThreads.add(t);
         t.start();
         stats.setThreadCount(readThreads.size(), true);
     }
 
-    private void addWriteThreadLocked() {
+    private void maybeAddWriteThreadLocked() {
         assert(lock.isLocked());
-        if (writeThreads.size() < MAX_WRITE_THREADS) {
+        if (writeThreads.size() < MAX_WRITE_THREADS &&
+            readThreads.size() + writeThreads.size() < connectionTarget.getThreadCountTarget()) {
             WriteThread t = new WriteThread(this, stats);
             writeThreads.add(t);
             t.start();
@@ -374,14 +377,52 @@ public class RampUpAndDown {
         }
     }
 
+    private void stop() {
+        while (true) {
+            Iterator<ReadThread> it = readThreads.iterator();
+            while (it.hasNext()) {
+                ReadThread t = it.next();
+                Thread.State state = t.getState();
+                if (state == Thread.State.TERMINATED) {
+                    it.remove();
+                    stats.setThreadCount(readThreads.size(), true);
+                }
+                t.terminate();
+            }
+            Iterator<WriteThread> it2 = writeThreads.iterator();
+            while (it2.hasNext()) {
+                WriteThread t = it2.next();
+                Thread.State state = t.getState();
+                if (state == Thread.State.TERMINATED) {
+                    it.remove();
+                    stats.setThreadCount(writeThreads.size(), false);
+                }
+                t.terminate();
+            }
+            stats.logStatsIfNeeded();
+            if (readThreads.size() + writeThreads.size() == 0) {
+                break;
+            }
+        }
+        for (MongoClient client : clients) {
+            client.close();
+        }
+    }
+
+    private boolean shouldContinue() {
+        return connectionTarget.getThreadCountTarget() > 0;
+    }
+
     public static void main(String[] args) throws Exception {
         Stats stats = new Stats();
         RampUpAndDown test = new RampUpAndDown(stats);
-        while (true) {
+        while (test.shouldContinue()) {
             test.read();
             test.write();
             stats.logStatsIfNeeded();
             Thread.sleep(60);
         }
+        System.out.println("Terminating...");
+        test.stop();
     }
 }
