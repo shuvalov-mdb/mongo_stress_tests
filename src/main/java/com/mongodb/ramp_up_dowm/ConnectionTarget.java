@@ -1,14 +1,14 @@
 package com.mongodb.ramp_up_dowm;
 
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class ConnectionTarget {
     static final int CONNECTION_RAMP_UP_PER_SEC = 10;
-    static final int CONNECTION_RAMP_DOWN_PER_SEC = 30;
+    static final int CONNECTION_RAMP_DOWN_PER_SEC = 50;
     static final int RAMP_UP_MINIMAL_TIME_SECONDS = 30;
+    static final int RAMP_UP_MAXIMUM_TIME_SECONDS = 40;
     static final int STRESS_STATE_LENGTH_SECONDS = 20;
 
     private final ReentrantLock lock = new ReentrantLock();
@@ -54,6 +54,9 @@ public class ConnectionTarget {
                 }
                 break;
                 case STRESS: {
+                    if (doAdjust) {
+                        --targetThreadCount;
+                    }
                     if (ChronoUnit.MILLIS.between(stressStateStart, now) > 
                         STRESS_STATE_LENGTH_SECONDS * 1000) {
                         state = State.RAMP_DOWN;
@@ -84,8 +87,10 @@ public class ConnectionTarget {
         }
         int currentReadQPS = stats.getValue("read");
         int currentWriteQPS = stats.getValue("write");
-        if (currentReadQPS < lastReadQPS * 0.99 &&
-            currentWriteQPS < lastWriteQPS * 0.99) {
+        if ((currentReadQPS < lastReadQPS * 0.98 &&
+            currentWriteQPS < lastWriteQPS * 0.98) ||
+            ChronoUnit.MILLIS.between(rampUpStart, now) >
+            RAMP_UP_MAXIMUM_TIME_SECONDS * 1000) {
                 System.out.println("Detected ramp up completion state");
                 state = State.STRESS;
                 stressStateStart = LocalDateTime.now();

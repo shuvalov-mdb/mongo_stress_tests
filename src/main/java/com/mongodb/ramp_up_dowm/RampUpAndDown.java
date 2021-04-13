@@ -6,6 +6,7 @@ import static com.mongodb.client.model.Filters.gte;
 import static com.mongodb.client.model.Filters.lte;
 import static com.mongodb.client.model.Updates.set;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.Random;
@@ -35,13 +36,14 @@ import org.bson.conversions.Bson;
  * 3. Ramp down by stopping threads.
  */
 public class RampUpAndDown {
-    static final int MIN_READ_THREADS = 1000;
+    static final int MIN_READ_THREADS = 500;
     static final int MAX_READ_THREADS = 32000;
+    static final int MIN_WRITE_THREADS = 100;
     static final int MAX_WRITE_THREADS = 10000;
 
     static final int READ_INTERVAL_PER_THREAD_MS = 100;
 
-    static final int CLIENT_COUNT = 20;
+    static final int CLIENT_COUNT = 50;
 
     private final Stats stats;
     private static final Random rand = new Random();
@@ -54,7 +56,7 @@ public class RampUpAndDown {
 
     public RampUpAndDown(Stats stats) throws Exception {
         this.stats = stats;
-        connectionTarget = new ConnectionTarget(stats, MIN_READ_THREADS);
+        connectionTarget = new ConnectionTarget(stats, MIN_READ_THREADS + MIN_WRITE_THREADS);
         for (int i = 0; i < CLIENT_COUNT; ++i) {
             try {
                 MongoClient mongoClient = createClient();
@@ -108,12 +110,26 @@ public class RampUpAndDown {
         }
     }
 
-    public Document read() throws InterruptedException {
+    void initThreads() {
+        lock.lock();
+        try {
+            while (readThreads.size() < MIN_READ_THREADS) {
+                maybeAddReadThreadLocked();
+            }
+            while (writeThreads.size() < MIN_WRITE_THREADS) {
+                maybeAddWriteThreadLocked();
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public Document read() throws InterruptedException, IOException {
         // Find a thread with result.
         while (true) {
             lock.lock();
             try {
-                while (readThreads.size() + writeThreads.size() < connectionTarget.getThreadCountTarget()) {
+                while (readThreads.size() + writeThreads.size() < connectionTarget.getThreadCountTarget() - 1) {
                     maybeAddReadThreadLocked();
                     stats.logStatsIfNeeded();
                     Thread.sleep(1);
@@ -152,7 +168,7 @@ public class RampUpAndDown {
 
     private void maybeAddReadThreadLocked() {
         assert(lock.isLocked());
-        if (readThreads.size() + writeThreads.size() > connectionTarget.getThreadCountTarget()) {
+        if (readThreads.size() + writeThreads.size() >= connectionTarget.getThreadCountTarget()) {
             return;
         }
         ReadThread t = new ReadThread(this, stats);
@@ -163,7 +179,7 @@ public class RampUpAndDown {
 
     private void maybeAddWriteThreadLocked() {
         assert(lock.isLocked());
-        if (writeThreads.size() < MAX_WRITE_THREADS &&
+        while (writeThreads.size() < MAX_WRITE_THREADS &&
             readThreads.size() + writeThreads.size() < connectionTarget.getThreadCountTarget()) {
             WriteThread t = new WriteThread(this, stats);
             writeThreads.add(t);
@@ -226,7 +242,7 @@ public class RampUpAndDown {
             try {
                 document = doc;
                 if (document != null) {
-                    stats.registerEvent("read");
+                    stats.registerEvent("reads");
                 }
             } finally {
                 threadLock.unlock();
@@ -291,9 +307,9 @@ public class RampUpAndDown {
                     Bson updateOperation = set("class_id", rand.nextInt(10));
                     UpdateResult updateResult = gradesCollection.updateOne(filter, updateOperation);
                     if (updateResult.getModifiedCount() > 0) {
-                        stats.registerEvent("write");
+                        stats.registerEvent("writes");
                     }
-                    Thread.sleep(400);
+                    Thread.sleep(100);
                 }
             } catch (IllegalStateException e) {
                 System.out.println("Replace client failed with: " + e);
@@ -377,7 +393,7 @@ public class RampUpAndDown {
         }
     }
 
-    private void stop() {
+    private void stop() throws IOException {
         while (true) {
             Iterator<ReadThread> it = readThreads.iterator();
             while (it.hasNext()) {
@@ -394,7 +410,7 @@ public class RampUpAndDown {
                 WriteThread t = it2.next();
                 Thread.State state = t.getState();
                 if (state == Thread.State.TERMINATED) {
-                    it.remove();
+                    it2.remove();
                     stats.setThreadCount(writeThreads.size(), false);
                 }
                 t.terminate();
@@ -414,15 +430,23 @@ public class RampUpAndDown {
     }
 
     public static void main(String[] args) throws Exception {
-        Stats stats = new Stats();
+        String report = "/tmp/stresstest.txt";
+        if (args.length > 0) {
+            report = args[0];
+        }
+        System.out.println("Will generate the report in file " + report);
+        Stats stats = new Stats(report, new String[]{ "reads", "writes", Stats.READ_THREADS_KEY, Stats.WRITE_THREADS_KEY });
         RampUpAndDown test = new RampUpAndDown(stats);
+        test.initThreads();
         while (test.shouldContinue()) {
             test.read();
+            Thread.sleep(20);
             test.write();
             stats.logStatsIfNeeded();
-            Thread.sleep(60);
+            Thread.sleep(20);
         }
         System.out.println("Terminating...");
         test.stop();
+        stats.close();
     }
 }
