@@ -38,12 +38,12 @@ import org.bson.conversions.Bson;
 public class RampUpAndDown {
     static final int MIN_READ_THREADS = 500;
     static final int MAX_READ_THREADS = 32000;
-    static final int MIN_WRITE_THREADS = 100;
+    static final int MIN_WRITE_THREADS = 200;
     static final int MAX_WRITE_THREADS = 10000;
 
     static final int READ_INTERVAL_PER_THREAD_MS = 100;
 
-    static final int CLIENT_COUNT = 50;
+    static final int CLIENT_COUNT = 200;
 
     private final Stats stats;
     private static final Random rand = new Random();
@@ -302,7 +302,7 @@ public class RampUpAndDown {
                 MongoCollection<Document> gradesCollection = sampleTrainingDB.getCollection("grades")
                     .withWriteConcern(sampleTrainingDB.getWriteConcern().withWTimeout(30000, TimeUnit.MILLISECONDS));
 
-                for (loops = 0; loops < 100; ++loops) {
+                for (loops = 0; loops < 200; ++loops) {
                     Bson filter = eq("student_id", 10000 + rand.nextInt(1000));
                     Bson updateOperation = set("class_id", rand.nextInt(10));
                     UpdateResult updateResult = gradesCollection.updateOne(filter, updateOperation);

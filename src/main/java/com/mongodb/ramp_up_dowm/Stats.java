@@ -2,12 +2,11 @@ package com.mongodb.ramp_up_dowm;
 
 import java.io.FileWriter;
 import java.io.IOException;
-import java.text.SimpleDateFormat;
-import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
@@ -18,12 +17,11 @@ public class Stats {
 
     private final ReentrantLock lock = new ReentrantLock();
     private Map<String, FrequencyCounter> stats = new HashMap<String, FrequencyCounter>();
-    private LocalDateTime lastLogTime = LocalDateTime.now();
+    private ZonedDateTime lastLogTime = ZonedDateTime.now( ZoneOffset.UTC );
     private int currentReadThreads = 0;
     private int currentWriteThreads = 0;
     private FileWriter report;
     private String[] columns;
-    DateTimeFormatter formatter = DateTimeFormatter.ofPattern("HH:mm:ss:SSS");
 
     public Stats(String report, String[] columns) throws IOException {
         this.report = new FileWriter(report);
@@ -66,10 +64,10 @@ public class Stats {
 
     public void logStatsIfNeeded() throws IOException {
         StringBuffer sb = new StringBuffer();
-        LocalDateTime now;
+        ZonedDateTime now;
         lock.lock();
         try {
-            now = LocalDateTime.now();
+            now = ZonedDateTime.now( ZoneOffset.UTC );
             if (ChronoUnit.MILLIS.between(lastLogTime, now) < 1000) {
                 return;  // Too early
             }
@@ -88,7 +86,7 @@ public class Stats {
 
         // File report is using fixed columns.
         StringBuffer b = new StringBuffer();
-        b.append(now.format(formatter)).append("\t");
+        b.append(now.format( DateTimeFormatter.ISO_INSTANT )).append("\t");
         for (String col : columns) {
             b.append(getValue(col)).append("\t");
         }

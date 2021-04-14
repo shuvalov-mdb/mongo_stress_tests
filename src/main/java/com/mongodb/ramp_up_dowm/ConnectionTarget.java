@@ -5,10 +5,10 @@ import java.time.temporal.ChronoUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class ConnectionTarget {
-    static final int CONNECTION_RAMP_UP_PER_SEC = 10;
+    static final int CONNECTION_RAMP_UP_PER_SEC = 20;
     static final int CONNECTION_RAMP_DOWN_PER_SEC = 50;
     static final int RAMP_UP_MINIMAL_TIME_SECONDS = 30;
-    static final int RAMP_UP_MAXIMUM_TIME_SECONDS = 40;
+    static final int RAMP_UP_MAXIMUM_TIME_SECONDS = 50;
     static final int STRESS_STATE_LENGTH_SECONDS = 20;
 
     private final ReentrantLock lock = new ReentrantLock();
